@@ -349,11 +349,22 @@ class HostDiscover(QThread):
         self.ip_subnet = subnet
         self.network_id = ipaddress.ip_network(f"{self.ip_address}/{self.ip_subnet}", strict=False)
 
+        self.mac_ip = {}
+
     def run(self):
         ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=str(self.network_id)), iface=self.iface, timeout=2)
         total_host = f"({len(ans)} Active Devices)"
+
         for packet in ans:
             host_data = PacketUtils.host_info(packet, self.mac_address)
+
+            if host_data.host_mac not in self.mac_ip:
+                self.mac_ip[host_data.host_mac] = {
+                    "name": host_data.host_name,
+                    "ip": []
+                }
+            if host_data.host_ip not in self.mac_ip[host_data.host_mac]["ip"]:
+                self.mac_ip[host_data.host_mac]["ip"].append(host_data.host_ip)
 
             if host_data.host_name == "Unknown" and host_data.host_vendor != "Unknown":
                 host_name = f"{host_data.host_name} ({host_data.host_vendor})"
@@ -362,6 +373,30 @@ class HostDiscover(QThread):
 
             discovered_host = f"{host_name}\n{host_data.host_ip}\n{host_data.host_mac}"
             self.host_discovered_signal.emit(discovered_host, packet, total_host)
+
+        self.duplicate_mac_check(self.mac_ip)
+
+    def duplicate_mac_check(self, mac_ip):
+        for mac, name_ips in mac_ip.items():
+            hostname = name_ips["name"]
+            ip_total = len(name_ips["ip"])
+            ip_str = ", ".join(name_ips["ip"])
+
+            if ip_total > 1:
+                a = Alert(datetime.now(),
+                          "WARNING",        # Severity
+                          "MAC Spoofing",   # Category
+                          f"MAC address of {hostname} ({mac}) is being used by {ip_total} different IPs ({ip_str}). ",
+                          f"MAC spoofing detected: {hostname} ({mac}) appeared from multiple IPs.",
+                          f"Check which device is supposed to use this MAC address. "
+                          f"If an unknown device appears, disconnect it.",
+                          {"hostname": hostname,
+                           "mac": mac,
+                           "total_ip": ip_total,
+                           "ips": ip_str}
+                          )
+                alert_manager.add_alert(a)
+
 
 
 # Window for host details
@@ -750,6 +785,28 @@ class AlertDetailsPopup(QDialog):
                                         color:black;
                                     }
                                 """)
+        elif alert.category == "MAC Spoofing":
+            alert_details_layout_v.addWidget(message)
+            alert_details_layout_v.addWidget(QLabel(f"Hostname\t: {alert.evidence['hostname']}\n"
+                                                    f"MAC\t\t: {alert.evidence['mac']}\n"
+                                                    f"Total IP\t: {alert.evidence['total_ip']}\n"
+                                                    f"IPs\t\t: {alert.evidence['ips']}"))
+            alert_details_layout_v.addWidget(suggestion)
+
+            # self.host_dc_btn = QPushButton(f"Disconnect {alert.evidence['hostname'] if alert.evidence['hostname']
+            #                                != "Unknown" else alert.evidence['mac']}")
+            # alert_details_layout_v.addWidget(self.host_dc_btn)
+            #
+            # self.host_dc_btn.setStyleSheet("""
+            #                         QPushButton{
+            #                             border:1px solid #e70e06;
+            #                             border-radius:4px;
+            #                         }
+            #                         QPushButton:hover{
+            #                             background-color:#e70e06;
+            #                             color:black;
+            #                         }
+            #                     """)
 
     def add_host_db(self, alert):
         host_name = self.host_add_in.text().strip()
