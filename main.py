@@ -380,23 +380,23 @@ class HostDiscover(QThread):
         for mac, name_ips in mac_ip.items():
             hostname = name_ips["name"]
             ip_total = len(name_ips["ip"])
-            ip_str = ", ".join(name_ips["ip"])
+            ips = name_ips["ip"]
 
             if ip_total > 1:
                 a = Alert(datetime.now(),
                           "WARNING",        # Severity
                           "MAC Spoofing",   # Category
-                          f"MAC address of {hostname} ({mac}) is being used by {ip_total} different IPs ({ip_str}). ",
-                          f"MAC spoofing detected: {hostname} ({mac}) appeared from multiple IPs.",
+                          f"MAC address of {hostname} ({mac}) is being used by {ip_total} different IPs "
+                          f"({", ".join(ips)}). ",  # Message
+                          f"MAC spoofing detected: {hostname} ({mac}) appeared from multiple IPs.",  # Noti
                           f"Check which device is supposed to use this MAC address. "
-                          f"If an unknown device appears, disconnect it.",
+                          f"If an unknown device appears, disconnect it.",  # Suggestion
                           {"hostname": hostname,
                            "mac": mac,
                            "total_ip": ip_total,
-                           "ips": ip_str}
+                           "ips": ips}
                           )
                 alert_manager.add_alert(a)
-
 
 
 # Window for host details
@@ -539,6 +539,7 @@ class HostDetailsPopup(QDialog):
 
         self.host_details_check.clicked.connect(self.security_check)
         self.host_add_change_btn.clicked.connect(self.add_change_host_db)
+        self.host_details_dc.clicked.connect(self.dc_host_netw)
 
     def add_change_host_db(self):
         host_name = self.host_add_change_in.text().strip()
@@ -554,6 +555,9 @@ class HostDetailsPopup(QDialog):
                                     f"\nRescan to see the changes!")
 
         self.close()
+
+    def dc_host_netw(self):
+        return
 
     def security_check(self):
         self.host_details_check.setDisabled(True)
@@ -731,6 +735,7 @@ class AlertDetailsPopup(QDialog):
                     """)
 
             self.host_add_btn.clicked.connect(lambda: self.add_host_db(alert))
+            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
 
         elif "Connected" in alert.category:
             alert_details_layout_v.addWidget(message)
@@ -755,6 +760,8 @@ class AlertDetailsPopup(QDialog):
                                                     color:black;
                                                 }
                                             """)
+
+            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
 
         elif alert.category == "Traffic Spike":
             alert_details_layout_v.addWidget(message)
@@ -785,28 +792,38 @@ class AlertDetailsPopup(QDialog):
                                         color:black;
                                     }
                                 """)
+
+            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
+
         elif alert.category == "MAC Spoofing":
             alert_details_layout_v.addWidget(message)
             alert_details_layout_v.addWidget(QLabel(f"Hostname\t: {alert.evidence['hostname']}\n"
                                                     f"MAC\t\t: {alert.evidence['mac']}\n"
                                                     f"Total IP\t: {alert.evidence['total_ip']}\n"
-                                                    f"IPs\t\t: {alert.evidence['ips']}"))
+                                                    f"IPs\t\t: {", ".join(alert.evidence['ips'])}"))
             alert_details_layout_v.addWidget(suggestion)
 
-            # self.host_dc_btn = QPushButton(f"Disconnect {alert.evidence['hostname'] if alert.evidence['hostname']
-            #                                != "Unknown" else alert.evidence['mac']}")
-            # alert_details_layout_v.addWidget(self.host_dc_btn)
-            #
-            # self.host_dc_btn.setStyleSheet("""
-            #                         QPushButton{
-            #                             border:1px solid #e70e06;
-            #                             border-radius:4px;
-            #                         }
-            #                         QPushButton:hover{
-            #                             background-color:#e70e06;
-            #                             color:black;
-            #                         }
-            #                     """)
+            self.host_dc_ip = QComboBox()
+            for ip in alert.evidence['ips']:
+                self.host_dc_ip.addItem(ip)
+            self.host_dc_btn = QPushButton(f"Disconnect")
+
+            alert_details_layout_h.addWidget(self.host_dc_ip)
+            alert_details_layout_h.addWidget(self.host_dc_btn)
+            alert_details_layout_v.addLayout(alert_details_layout_h)
+
+            self.host_dc_btn.setStyleSheet("""
+                                    QPushButton{
+                                        border:1px solid #e70e06;
+                                        border-radius:4px;
+                                    }
+                                    QPushButton:hover{
+                                        background-color:#e70e06;
+                                        color:black;
+                                    }
+                                """)
+
+            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
 
     def add_host_db(self, alert):
         host_name = self.host_add_in.text().strip()
@@ -823,6 +840,9 @@ class AlertDetailsPopup(QDialog):
                                                    f"\nScan host to see the updated list!")
 
         self.close()
+
+    def dc_host_netw(self, alert):
+        return
 
 
 # Packet Helper Class
