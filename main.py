@@ -136,6 +136,12 @@ class PacketCapture(QThread):
                 self.arp_scan_check_threshold = 2
                 self.arp_scan_check_duration = 1
 
+        # PORT SCAN DETECTION
+        self.port_scan_check_tracker = {}
+        self.port_scan_check_threshold = 30
+        self.port_scan_check_duration = 5
+        self.port_scan_check_alert_cooldown = 5
+
     def run(self):
         sniff(iface=self.iface, prn=self.process_captured_packet, store=False, stop_filter=self.should_stop_capturing)
 
@@ -149,6 +155,10 @@ class PacketCapture(QThread):
             self.new_device_check(packet)
         elif ARP in packet and packet[ARP].op == 1:
             self.arp_scan_check(packet)
+        elif TCP in packet and packet[TCP].flags == "S" and IP in packet:
+            self.tcp_syn_scan_check(packet)
+
+        self.port_scan_alert()
 
     def should_stop_capturing(self, packet):
         return not self.is_capturing_active
@@ -285,6 +295,76 @@ class PacketCapture(QThread):
                 alert_manager.add_alert(a)
 
                 self.arp_scan_check_tracker[src_mac].clear()
+
+    def tcp_syn_scan_check(self, packet):
+        now = time.time()
+        src_ip = packet[IP].src
+        src_mac = packet[Ether].src.upper()
+        target_ip = packet[IP].dst
+        target_port = packet[TCP].dport
+
+        if src_mac == self.mac:
+            return
+
+        tracker = self.port_scan_check_tracker.get(src_mac)
+        if tracker is None:
+            self.port_scan_check_tracker[src_mac] = {
+                "src_ip": src_ip,
+                "ports": {target_port},
+                "targets": {target_ip},
+                "start_time": now,
+                "last_seen": now,
+                "alerted": False
+            }
+            return
+
+        tracker["ports"].add(target_port)
+        tracker["targets"].add(target_ip)
+        tracker["last_seen"] = now
+
+        if now - tracker["start_time"] > self.port_scan_check_duration:
+            tracker["ports"].clear()
+            tracker["targets"].clear()
+            tracker["start_time"] = now
+            tracker["alerted"] = False
+            return
+
+    def port_scan_alert(self):
+        now = time.time()
+
+        for src_mac, tracker in list(self.port_scan_check_tracker.items()):
+            if tracker["alerted"]:
+                continue
+
+            if now - tracker["last_seen"] < self.port_scan_check_alert_cooldown:
+                continue
+
+            total_ports = len(tracker["ports"])
+
+            if total_ports >= self.port_scan_check_threshold:
+                src_name = device_db.get_name(src_mac)
+                duration = round(tracker["last_seen"] - tracker["start_time"], 2)
+
+                a = Alert(
+                    datetime.now(),
+                    "WARNING",      # Severity
+                    "Port Scan",    # Category
+                    f"{src_name or tracker["src_ip"]} scanned for {total_ports} ports in {duration} seconds.",  # Message
+                    f"Possible Port Scan Detected from {src_name or tracker["src_ip"]}.",  # Noti
+                    "If unknown, disconnect the device from the network.",
+                    {
+                        "hostname": src_name or "Unknown",
+                        "ip": tracker["src_ip"],
+                        "mac": src_mac,
+                        "targets": list(tracker["targets"]),
+                        "ports": sorted(tracker["ports"]),
+                        "total_ports": total_ports,
+                        "duration": duration
+                    }
+                )
+                alert_manager.add_alert(a)
+
+                tracker["alerted"] = True
 
 
 # Window for packet details
@@ -824,6 +904,16 @@ class AlertDetailsPopup(QDialog):
                                 """)
 
             self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
+
+        elif alert.category == "Port Scan":
+            alert_details_layout_v.addWidget(message)
+            alert_details_layout_v.addWidget(QLabel(f"Hostname\t: {alert.evidence['hostname']}\n"
+                                                    f"IP\t\t: {alert.evidence['ip']}\n"
+                                                    f"MAC\t\t: {alert.evidence['mac']}\n"
+                                                    f"Target IP\t: {alert.evidence['targets']}\n"
+                                                    f"Total Ports\t: {alert.evidence['total_ports']}\n"
+                                                    f"Duration\t: {alert.evidence['duration']}s"))
+            alert_details_layout_v.addWidget(suggestion)
 
     def add_host_db(self, alert):
         host_name = self.host_add_in.text().strip()
