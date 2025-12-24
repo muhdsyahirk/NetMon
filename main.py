@@ -1057,7 +1057,7 @@ class NetworkUtils():
     def get_interfaces():
         interfaces_details = {}
         for iface_name, addrs in psutil.net_if_addrs().items():
-            ip, mac, netmask, network, subnet = None, None, None, None, None
+            ip, mac, netmask, network, subnet, gateway = None, None, None, None, None, None
             for addr in addrs:
                 if addr.family.name == "AF_INET":
                     ip = addr.address
@@ -1070,6 +1070,12 @@ class NetworkUtils():
                     iface = ipaddress.IPv4Interface(f"{ip}/{netmask}")
                     network = str(iface.network.network_address)
                     subnet = iface.network.prefixlen
+
+                    temp = network.split(".")
+                    if len(temp) == 4:
+                        temp[-1] = "1"
+                        gateway = ".".join(temp)
+
                 except Exception:
                     pass
 
@@ -1078,6 +1084,7 @@ class NetworkUtils():
                                               "netmask": netmask,
                                               "network": network,
                                               "subnet": subnet,
+                                              "gateway": gateway,
                                               "network_subnet": f"{network}/{subnet}" if network and subnet else None}
 
         return interfaces_details
@@ -1106,6 +1113,7 @@ class NetworkUtils():
                                      "netmask": extra.get("netmask"),
                                      "network": extra.get("network"),
                                      "subnet": extra.get("subnet"),
+                                     "gateway": extra.get("gateway"),
                                      "network_subnet": extra.get("network_subnet")}
             except Exception:
                 continue
@@ -1122,6 +1130,7 @@ class MainWindow(QWidget):
         self.ip = None
         self.mac = None
         self.subnet = None
+        self.gateway = None
 
         # UI
         self.initUI()
@@ -1382,6 +1391,7 @@ class MainWindow(QWidget):
                     self.ip = iface_info['ip']
                     self.mac = iface_info['mac']
                     self.subnet = iface_info['subnet']
+                    self.gateway = iface_info['gateway']
                     break
 
             self.subnet_list.setEnabled(False)
