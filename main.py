@@ -344,6 +344,10 @@ class PacketCapture(QThread):
             if total_ports >= self.port_scan_check_threshold:
                 src_name = device_db.get_name(src_mac)
                 duration = round(tracker["last_seen"] - tracker["start_time"], 2)
+                try:
+                    src_vendor = MacLookup().lookup(src_mac)
+                except Exception:
+                    src_vendor = None
 
                 a = Alert(
                     datetime.now(),
@@ -356,6 +360,7 @@ class PacketCapture(QThread):
                         "hostname": src_name or "Unknown",
                         "ip": tracker["src_ip"],
                         "mac": src_mac,
+                        "vendor": src_vendor or "Unknown",
                         "targets": list(tracker["targets"]),
                         "ports": sorted(tracker["ports"]),
                         "total_ports": total_ports,
@@ -831,15 +836,15 @@ class AlertDetailsPopup(QDialog):
             alert_details_layout_v.addWidget(self.host_dc_btn)
 
             self.host_dc_btn.setStyleSheet("""
-                                                QPushButton{
-                                                    border:1px solid #e70e06;
-                                                    border-radius:4px;
-                                                }
-                                                QPushButton:hover{
-                                                    background-color:#e70e06;
-                                                    color:black;
-                                                }
-                                            """)
+                                    QPushButton{
+                                        border:1px solid #e70e06;
+                                        border-radius:4px;
+                                    }
+                                    QPushButton:hover{
+                                        background-color:#e70e06;
+                                        color:black;
+                                    }
+                                """)
 
             self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
 
@@ -910,10 +915,28 @@ class AlertDetailsPopup(QDialog):
             alert_details_layout_v.addWidget(QLabel(f"Hostname\t: {alert.evidence['hostname']}\n"
                                                     f"IP\t\t: {alert.evidence['ip']}\n"
                                                     f"MAC\t\t: {alert.evidence['mac']}\n"
-                                                    f"Target IP\t: {alert.evidence['targets']}\n"
+                                                    f"Vendor\t\t: {alert.evidence['vendor']}\n"
+                                                    f"Target IP\t: {", ".join(alert.evidence['targets'])}\n"
                                                     f"Total Ports\t: {alert.evidence['total_ports']}\n"
                                                     f"Duration\t: {alert.evidence['duration']}s"))
             alert_details_layout_v.addWidget(suggestion)
+
+            self.host_dc_btn = QPushButton(f"Disconnect {alert.evidence['hostname'] if alert.evidence['hostname']
+                                            != "Unknown" else alert.evidence['mac']}")
+            alert_details_layout_v.addWidget(self.host_dc_btn)
+
+            self.host_dc_btn.setStyleSheet("""
+                                    QPushButton{
+                                        border:1px solid #e70e06;
+                                        border-radius:4px;
+                                    }
+                                    QPushButton:hover{
+                                        background-color:#e70e06;
+                                        color:black;
+                                    }
+                                """)
+
+            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
 
     def add_host_db(self, alert):
         host_name = self.host_add_in.text().strip()
