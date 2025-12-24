@@ -37,6 +37,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from datetime import (datetime, timedelta)
 from plyer import notification
+import webbrowser
 import os.path
 import sqlite3
 import threading
@@ -486,9 +487,10 @@ class HostDiscover(QThread):
 
 # Window for host details
 class HostDetailsPopup(QDialog):
-    def __init__(self, host, mac, parent=None):
+    def __init__(self, host, mac, gateway, parent=None):
         super().__init__(parent)
         self.mac_address = mac
+        self.gateway = gateway
 
         self.setWindowIcon(QIcon('./NetMon-img/NetMon-Logo-Alt-TP.png'))
         self.resize(288, 250)
@@ -642,7 +644,7 @@ class HostDetailsPopup(QDialog):
         self.close()
 
     def dc_host_netw(self):
-        return
+        webbrowser.open(self.gateway, new=2, autoraise=True)
 
     def security_check(self):
         self.host_details_check.setDisabled(True)
@@ -745,8 +747,9 @@ class AlertManager(QObject):
 
 # Window for alert details
 class AlertDetailsPopup(QDialog):
-    def __init__(self, alert, parent=None):
+    def __init__(self, alert, gateway, parent=None):
         super().__init__(parent)
+        self.gateway = gateway
 
         self.setFixedWidth(360)
         self.setWindowTitle(f"{alert.timestamp:%I:%M %p} [{alert.severity}] {alert.category}")
@@ -820,7 +823,7 @@ class AlertDetailsPopup(QDialog):
                     """)
 
             self.host_add_btn.clicked.connect(lambda: self.add_host_db(alert))
-            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
+            self.host_dc_btn.clicked.connect(self.dc_host_netw)
 
         elif "Connected" in alert.category:
             alert_details_layout_v.addWidget(message)
@@ -846,7 +849,7 @@ class AlertDetailsPopup(QDialog):
                                     }
                                 """)
 
-            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
+            self.host_dc_btn.clicked.connect(self.dc_host_netw)
 
         elif alert.category == "Traffic Spike":
             alert_details_layout_v.addWidget(message)
@@ -878,7 +881,7 @@ class AlertDetailsPopup(QDialog):
                                     }
                                 """)
 
-            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
+            self.host_dc_btn.clicked.connect(self.dc_host_netw)
 
         elif alert.category == "MAC Spoofing":
             alert_details_layout_v.addWidget(message)
@@ -908,7 +911,7 @@ class AlertDetailsPopup(QDialog):
                                     }
                                 """)
 
-            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
+            self.host_dc_btn.clicked.connect(self.dc_host_netw)
 
         elif alert.category == "Port Scan":
             alert_details_layout_v.addWidget(message)
@@ -936,7 +939,7 @@ class AlertDetailsPopup(QDialog):
                                     }
                                 """)
 
-            self.host_dc_btn.clicked.connect(lambda: self.dc_host_netw(alert))
+            self.host_dc_btn.clicked.connect(self.dc_host_netw)
 
     def add_host_db(self, alert):
         host_name = self.host_add_in.text().strip()
@@ -954,8 +957,8 @@ class AlertDetailsPopup(QDialog):
 
         self.close()
 
-    def dc_host_netw(self, alert):
-        return
+    def dc_host_netw(self):
+        webbrowser.open(self.gateway, new=2, autoraise=True)
 
 
 # Packet Helper Class
@@ -1527,7 +1530,7 @@ class MainWindow(QWidget):
 
     def host_details(self, host_each):
         host = host_each.data(256)
-        host_in_details_window = HostDetailsPopup(host, self.mac)
+        host_in_details_window = HostDetailsPopup(host, self.mac, self.gateway)
         host_in_details_window.exec()
 
     def update_alert(self, alert):
@@ -1537,7 +1540,7 @@ class MainWindow(QWidget):
 
     def alert_details(self, alert_each):
         alert = alert_each.data(256)
-        alert_in_details_window = AlertDetailsPopup(alert)
+        alert_in_details_window = AlertDetailsPopup(alert, self.gateway)
         alert_in_details_window.exec()
 
 
