@@ -769,6 +769,8 @@ class HostSecurityCheck(QThread):
 
         if open_ports:
             ports_str = ", ".join(f"{p} ({n})" for p, n in open_ports)
+            ports = ", ".join(str(p) for p, _ in open_ports)
+            services = ", ".join(str(n) for _, n in open_ports)
 
             a = Alert(
                 datetime.now(),
@@ -780,9 +782,11 @@ class HostSecurityCheck(QThread):
                 "Close unnecessary ports or restrict access using a firewall.",
                 {"host_name": self.host_name,
                  "host_ip": self.host_ip,
-                 "open_ports": [p for p, _ in open_ports],
-                 "services": [n for _, n in open_ports],
-                 "total_open_ports": len(open_ports)})  # Evidence
+                 "open_ports": ports,
+                 "services": services,
+                 "total_open_ports": len(open_ports),
+                 "p": [p for p, _ in open_ports],
+                 "s": [n for _, n in open_ports]})  # Evidence
             alert_manager.add_alert(a)
 
 
@@ -1574,7 +1578,7 @@ class MainWindow(QWidget):
                           {"current_pkt_count": self.packet_count_y[-1],
                            "avg_pkt_count": packet_avg_window,
                            "graph_time": self.graph_elapsed_time})
-                alert_manager.add_alert(a)
+                # alert_manager.add_alert(a)
                 """
                 time_spike_x = self.time_stamps_x[-2:]
                 packet_spike_y = self.packet_count_y[-2:]
