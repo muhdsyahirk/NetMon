@@ -373,17 +373,14 @@ class PacketCapture(QThread):
                     f"{src_name or tracker["src_ip"]} scanned for {total_ports} ports in {duration} seconds.",  # Message
                     f"Possible Port Scan Detected from {src_name or tracker["src_ip"]}.",  # Noti
                     "If unknown, disconnect the device from the network.",  # Suggestion
-                    {
-                        "hostname": src_name or "Unknown",
-                        "ip": tracker["src_ip"],
-                        "mac": src_mac,
-                        "vendor": src_vendor or "Unknown",
-                        "targets": list(tracker["targets"]),
-                        "ports": sorted(tracker["ports"]),
-                        "total_ports": total_ports,
-                        "duration": duration
-                    }
-                )
+                    {"hostname": src_name or "Unknown",
+                     "ip": tracker["src_ip"],
+                     "mac": src_mac,
+                     "vendor": src_vendor or "Unknown",
+                     "targets": list(tracker["targets"]),
+                     "ports": sorted(tracker["ports"]),
+                     "total_ports": total_ports,
+                     "duration": duration})  # Evidence
                 alert_manager.add_alert(a)
 
                 tracker["alerted"] = True
@@ -434,13 +431,10 @@ class PacketCapture(QThread):
                 f"{total_requests} DHCP Requests detected in {duration} seconds.",  # Message
                 "Possible DHCP Starvation attack detected.",  # Noti
                 "Inspect connected devices and disconnect unknown devices quickly.",  # Suggestion
-                {
-                    "request_count": total_requests,
-                    "duration": duration,
-                }
-            )
+                {"request_count": total_requests,
+                 "duration": duration,})
+            alert_manager.add_alert(a)  # Evidence
 
-            alert_manager.add_alert(a)
             tracker["alerted"] = True
 
 
@@ -551,8 +545,7 @@ class HostDiscover(QThread):
                           {"hostname": hostname,
                            "mac": mac,
                            "total_ip": ip_total,
-                           "ips": ips}
-                          )
+                           "ips": ips})  # Evidence
                 alert_manager.add_alert(a)
 
 
@@ -722,7 +715,7 @@ class HostDetailsPopup(QDialog):
         QTimer.singleShot(1000, lambda: self.host_details_check.setEnabled(True))
 
         self.host_security_results.clear()
-        self.check = HostSecurityCheck(self.host_data.host_ip)
+        self.check = HostSecurityCheck(self.host_data.host_ip, self.host_data.host_name)
         self.check.security_result_signal.connect(self.security_check_results)
         self.check.start()
 
@@ -739,14 +732,17 @@ class HostDetailsPopup(QDialog):
 class HostSecurityCheck(QThread):
     security_result_signal = Signal(int, str)
 
-    def __init__(self, host_ip):
+    def __init__(self, host_ip, host_name):
         super().__init__()
         self.host_ip = host_ip
+        self.host_name = host_name
         self.ports = [20, 22, 53, 80, 139, 443]
 
     def run(self):
         pkt = IP(dst=self.host_ip)/TCP(flags="S", dport=self.ports)
         ans, unans = sr(pkt, timeout=2, retry=0, verbose=0)
+
+        open_ports = []
 
         for sent, received in ans:
             if received.haslayer(TCP):
@@ -756,6 +752,8 @@ class HostSecurityCheck(QThread):
                     port_name = socket.getservbyport(port, "tcp")
                     status = f"OPEN ({port_name})"
                     self.security_result_signal.emit(port, status)
+
+                    open_ports.append((port, port_name))
 
                 elif received[TCP].flags & 0x14 == 0x14 or received[TCP].flags & 0x04 == 0x04:
                     port = received[TCP].sport if received[TCP].sport in self.ports else sent[TCP].dport
@@ -768,6 +766,24 @@ class HostSecurityCheck(QThread):
                 port_name = socket.getservbyport(port, "tcp")
                 status = f"FILTERED ({port_name})"
                 self.security_result_signal.emit(port, status)
+
+        if open_ports:
+            ports_str = ", ".join(f"{p} ({n})" for p, n in open_ports)
+
+            a = Alert(
+                datetime.now(),
+                "WARNING",      # Severity
+                "Open Ports",   # Category
+                f"Open ports detected on host "
+                f"{self.host_name if self.host_name != "Unknown" else self.host_ip}: {ports_str}",  # Message
+                f"Host {self.host_name if self.host_name != "Unknown" else self.host_ip} has open port(s).",
+                "Close unnecessary ports or restrict access using a firewall.",
+                {"host_name": self.host_name,
+                 "host_ip": self.host_ip,
+                 "open_ports": [p for p, _ in open_ports],
+                 "services": [n for _, n in open_ports],
+                 "total_open_ports": len(open_ports)})  # Evidence
+            alert_manager.add_alert(a)
 
 
 # Alert Dataclass
@@ -1009,6 +1025,15 @@ class AlertDetailsPopup(QDialog):
             alert_details_layout_v.addWidget(message)
             alert_details_layout_v.addWidget(QLabel(f"Request Count\t: {alert.evidence['request_count']}\n"
                                                     f"Duration\t: {alert.evidence['duration']}s"))
+            alert_details_layout_v.addWidget(suggestion)
+
+        elif alert.category == "Open Ports":
+            alert_details_layout_v.addWidget(message)
+            alert_details_layout_v.addWidget(QLabel(f"Host Name\t: {alert.evidence['host_name']}\n"
+                                                    f"Host IP\t\t: {alert.evidence['host_ip']}\n"
+                                                    f"Open Ports\t: {alert.evidence['open_ports']}\n"
+                                                    f"Services\t\t: {alert.evidence['services']}\n"
+                                                    f"Total Open\t: {alert.evidence['total_open_ports']}"))
             alert_details_layout_v.addWidget(suggestion)
 
     def add_host_db(self, alert):
