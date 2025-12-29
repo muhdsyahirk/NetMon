@@ -143,6 +143,17 @@ class PacketCapture(QThread):
         self.port_scan_check_duration = 5
         self.port_scan_check_alert_cooldown = 5
 
+        # DHCP STARVATION DETECTION
+        self.dhcp_starvation_check_tracker = {
+            "times": set(),
+            "start_time": None,
+            "last_seen": None,
+            "alerted": False
+        }
+        self.dhcp_starvation_check_threshold = 10
+        self.dhcp_starvation_check_duration = 5
+        self.dhcp_starvation_check_alert_cooldown = 5
+
     def run(self):
         sniff(iface=self.iface, prn=self.process_captured_packet, store=False, stop_filter=self.should_stop_capturing)
 
@@ -160,6 +171,7 @@ class PacketCapture(QThread):
             self.tcp_syn_scan_check(packet)
 
         self.port_scan_alert()
+        self.dhcp_starvation_alert()
 
     def should_stop_capturing(self, packet):
         return not self.is_capturing_active
@@ -181,6 +193,9 @@ class PacketCapture(QThread):
             if isinstance(option, tuple) and (option[0] == "message-type" or option[0] == 53):
                 dhcp_type = str(option[1]).lower()  # DORA or 1-4
                 break
+
+        if dhcp_type in ('discover', '1'):
+            self.dhcp_starvation_check(packet)
 
         # Check if DHCP DORA (new device wants to join the network)
         if dhcp_type in ('request', '3'):  # Should be 1/3/5 D/R/A, but read WORD
@@ -323,6 +338,7 @@ class PacketCapture(QThread):
         tracker["targets"].add(target_ip)
         tracker["last_seen"] = now
 
+        # If exceeded check duration
         if now - tracker["start_time"] > self.port_scan_check_duration:
             tracker["ports"].clear()
             tracker["targets"].clear()
@@ -356,7 +372,7 @@ class PacketCapture(QThread):
                     "Port Scan",    # Category
                     f"{src_name or tracker["src_ip"]} scanned for {total_ports} ports in {duration} seconds.",  # Message
                     f"Possible Port Scan Detected from {src_name or tracker["src_ip"]}.",  # Noti
-                    "If unknown, disconnect the device from the network.",
+                    "If unknown, disconnect the device from the network.",  # Suggestion
                     {
                         "hostname": src_name or "Unknown",
                         "ip": tracker["src_ip"],
@@ -371,6 +387,61 @@ class PacketCapture(QThread):
                 alert_manager.add_alert(a)
 
                 tracker["alerted"] = True
+
+    def dhcp_starvation_check(self, packet):
+        now = time.time()
+
+        tracker = self.dhcp_starvation_check_tracker
+
+        if tracker["start_time"] is None:
+            tracker["start_time"] = now
+            tracker["last_seen"] = now
+            tracker["times"].add(now)
+            tracker["alerted"] = False
+            return
+
+        tracker["times"].add(now)
+        tracker["last_seen"] = now
+
+        # If exceeded check duration
+        if now - tracker["start_time"] > self.dhcp_starvation_check_duration:
+            tracker["times"].clear()
+            tracker["start_time"] = now
+            tracker["alerted"] = False
+
+    def dhcp_starvation_alert(self):
+        now = time.time()
+        tracker = self.dhcp_starvation_check_tracker
+
+        if tracker["start_time"] is None:
+            return
+
+        if tracker["alerted"]:
+            return
+
+        if now - tracker["last_seen"] < self.dhcp_starvation_check_alert_cooldown:
+            return
+
+        total_requests = len(tracker["times"])
+
+        if total_requests >= self.dhcp_starvation_check_threshold:
+            duration = round(tracker["last_seen"] - tracker["start_time"], 2)
+
+            a = Alert(
+                datetime.now(),
+                "CRITICAL",         # Severity
+                "DHCP Starvation",  # Category
+                f"{total_requests} DHCP Requests detected in {duration} seconds.",  # Message
+                "Possible DHCP Starvation attack detected.",  # Noti
+                "Inspect connected devices and disconnect unknown devices quickly.",  # Suggestion
+                {
+                    "request_count": total_requests,
+                    "duration": duration,
+                }
+            )
+
+            alert_manager.add_alert(a)
+            tracker["alerted"] = True
 
 
 # Window for packet details
@@ -718,14 +789,7 @@ class AlertManager(QObject):
     def __init__(self):
         super().__init__()
         self.lock = threading.Lock()
-        self.alerts = []            # Alert history
-        self.dedupe = {}            # De-duplication
-        self.dedupe_seconds = 5     # De-duplication timer
-
-    def _dedupe_key(self, alert: Alert):
-        if alert.category == "New Device":
-            return f"newdevice:{alert.evidence.get('src_mac')}"
-        return f"{alert.category}:{str(alert.evidence)}"
+        self.alerts = []  # Alert history
 
     def add_alert(self, alert: Alert):
         with self.lock:
@@ -940,6 +1004,12 @@ class AlertDetailsPopup(QDialog):
                                 """)
 
             self.host_dc_btn.clicked.connect(self.dc_host_netw)
+
+        elif alert.category == "DHCP Starvation":
+            alert_details_layout_v.addWidget(message)
+            alert_details_layout_v.addWidget(QLabel(f"Request Count\t: {alert.evidence['request_count']}\n"
+                                                    f"Duration\t: {alert.evidence['duration']}s"))
+            alert_details_layout_v.addWidget(suggestion)
 
     def add_host_db(self, alert):
         host_name = self.host_add_in.text().strip()
