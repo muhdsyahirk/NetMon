@@ -744,7 +744,7 @@ class HostSecurityCheck(QThread):
         super().__init__()
         self.host_ip = host_ip
         self.host_name = host_name
-        self.ports = [20, 22, 53, 80, 139, 443]
+        self.ports = [21, 22, 23, 25, 445, 3389]
 
     def run(self):
         pkt = IP(dst=self.host_ip)/TCP(flags="S", dport=self.ports)
