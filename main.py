@@ -455,6 +455,7 @@ class PacketCapture(QThread):
         dst_name = None
         src_vendor = None
         dst_vendor = None
+        src_mac = None
         if Ether in packet:
             src_mac = packet[Ether].src.upper()
             src_name = device_db.get_name(src_mac)
@@ -467,11 +468,14 @@ class PacketCapture(QThread):
                 src_vendor = None
                 dst_vendor = None
 
+        if src_mac == self.mac:
+            return
+
         sus = False
         malformed_desc = None
         evidence = None
 
-        if packet[IP].proto not in (1, 6, 17):
+        if packet[IP].proto not in (1, 2, 6, 17):
             sus = True
             evidence = packet[IP].proto
             malformed_desc = f"IP packet with unknown protocol ({evidence})"
@@ -500,7 +504,8 @@ class PacketCapture(QThread):
                 "Malformed Packet",  # Category
                 f"{src_name or src_ip} sends {malformed_desc} to {dst_name or dst_ip}",  # Message
                 f"Malformed packet detected from {src_name or src_ip}.",  # Noti
-                "Inspect the source host for misconfigured applications or malware.",  # Suggestion
+                "Inspect the source host for misconfigured applications or malware "
+                "or disconnect the device from the network.",  # Suggestion
                 {"src_name": src_name or "Unknown",
                  "src_ip": src_ip,
                  "src_vendor": src_vendor,
