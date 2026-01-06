@@ -24,7 +24,8 @@ from PySide6.QtGui import QFont, QIcon, QColor
 import pyqtgraph as pg
 from scapy.all import *
 from scapy.layers.l2 import Ether, ARP, arping
-from scapy.layers.inet import IP, TCP
+from scapy.layers.inet import IP, TCP, UDP
+from scapy.packet import Raw
 from scapy.layers.dns import DNS
 from scapy.layers.http import HTTPRequest, HTTPResponse
 # from scapy.layers.tls.all import TLS
@@ -168,6 +169,8 @@ class PacketCapture(QThread):
             self.arp_scan_check(packet)
         elif TCP in packet and packet[TCP].flags == "S" and IP in packet:
             self.tcp_syn_scan_check(packet)
+        elif IP in packet:
+            self.malformed_packet_check(packet)
 
         self.port_scan_alert()
         self.dhcp_starvation_alert()
@@ -440,10 +443,72 @@ class PacketCapture(QThread):
                 "Possible DHCP Starvation attack detected.",  # Noti
                 "Inspect connected devices and disconnect unknown devices quickly.",  # Suggestion
                 {"request_count": total_requests,
-                 "duration": duration,})
-            alert_manager.add_alert(a)  # Evidence
+                 "duration": duration,})  # Evidence
+            alert_manager.add_alert(a)
 
             tracker["alerted"] = True
+
+    def malformed_packet_check(self, packet):
+        src_ip = packet[IP].src
+        dst_ip = packet[IP].dst
+        src_name = None
+        dst_name = None
+        src_vendor = None
+        dst_vendor = None
+        if Ether in packet:
+            src_mac = packet[Ether].src.upper()
+            src_name = device_db.get_name(src_mac)
+            dst_mac = packet[Ether].dst.upper()
+            dst_name = device_db.get_name(dst_mac)
+            try:
+                src_vendor = MacLookup().lookup(src_mac)
+                dst_vendor = MacLookup().lookup(dst_mac)
+            except Exception:
+                src_vendor = None
+                dst_vendor = None
+
+        sus = False
+        malformed_desc = None
+        evidence = None
+
+        if packet[IP].proto not in (1, 6, 17):
+            sus = True
+            evidence = packet[IP].proto
+            malformed_desc = f"IP packet with unknown protocol ({evidence})"
+
+        elif packet.haslayer(Raw) and not (packet.haslayer(TCP) or packet.haslayer(UDP)):
+            sus = True
+            evidence = packet[Raw].load
+            malformed_desc = "payload without transport protocol"
+
+        elif packet.haslayer(TCP):
+            if packet[TCP].flags == 0:
+                sus = True
+                evidence = packet[TCP].flags
+                malformed_desc = "TCP packet with no flags set"
+
+        elif packet.haslayer(UDP):
+            if packet[UDP].len == 0:
+                sus = True
+                evidence = packet[UDP].len
+                malformed_desc = "UDP packet with invalid length"
+
+        if sus:
+            a = Alert(
+                datetime.now(),
+                "WARNING",           # Severity
+                "Malformed Packet",  # Category
+                f"{src_name or src_ip} sends {malformed_desc} to {dst_name or dst_ip}",  # Message
+                f"Malformed packet detected from {src_name or src_ip}.",  # Noti
+                "Inspect the source host for misconfigured applications or malware.",  # Suggestion
+                {"src_name": src_name or "Unknown",
+                 "src_ip": src_ip,
+                 "src_vendor": src_vendor,
+                 "dst_name": dst_name or "Unknown",
+                 "dst_ip": dst_ip,
+                 "dst_vendor": dst_vendor,
+                 "evidence": evidence})  # Evidence
+            alert_manager.add_alert(a)
 
 
 # Window for packet details
@@ -1047,6 +1112,34 @@ class AlertDetailsPopup(QDialog):
                                                     f"Services\t\t: {alert.evidence['services']}\n"
                                                     f"Total Open\t: {alert.evidence['total_open_ports']}"))
             alert_details_layout_v.addWidget(suggestion)
+
+        elif alert.category == "Malformed Packet":
+            alert_details_layout_v.addWidget(message)
+            alert_details_layout_v.addWidget(QLabel(f"Src Name\t: {alert.evidence['src_name']}\n"
+                                                    f"Src IP\t\t: {alert.evidence['src_ip']}\n"
+                                                    f"Src Vendor\t: {alert.evidence['src_vendor']}\n"
+                                                    f"Dst Name\t: {alert.evidence['dst_name']}\n"
+                                                    f"Dst IP\t\t: {alert.evidence['dst_ip']}\n"
+                                                    f"Dst Vendor\t: {alert.evidence['dst_vendor']}\n"
+                                                    f"Evidence\t: {alert.evidence['evidence']}"))
+            alert_details_layout_v.addWidget(suggestion)
+
+            self.host_dc_btn = QPushButton(f"Disconnect {alert.evidence['src_name'] if alert.evidence['src_name']
+                                            != "Unknown" else alert.evidence['src_ip']}")
+            alert_details_layout_v.addWidget(self.host_dc_btn)
+
+            self.host_dc_btn.setStyleSheet("""
+                                                QPushButton{
+                                                    border:1px solid #e70e06;
+                                                    border-radius:4px;
+                                                }
+                                                QPushButton:hover{
+                                                    background-color:#e70e06;
+                                                    color:black;
+                                                }
+                                            """)
+
+            self.host_dc_btn.clicked.connect(self.dc_host_netw)
 
     def add_host_db(self, alert):
         host_name = self.host_add_in.text().strip()
