@@ -93,14 +93,10 @@ class PacketCapture(QThread):
         self.subnet = subnet
         self.is_capturing_active = True
 
-        pcap_file_temp = ""
-        for file_num in range(1, 1000):
-            if os.path.isfile(f'./Pocket-NetMon/NetMon {file_num}.pcap'):
-                continue
-            else:
-                pcap_file_temp = open(f'./Pocket-NetMon/NetMon {file_num}.pcap', "x")
-                break
-        self.pcap_file = pcap_file_temp.name
+        self.pkt_counter = 0
+        self.pcap_max = 5000
+        self.pcap_file = None
+        self.create_new_pcap()
 
         # ARP SCAN DETECTION
         self.arp_scan_check_tracker = {}
@@ -161,7 +157,10 @@ class PacketCapture(QThread):
         packet_summary = PacketUtils.packet_title(packet, self.network_id)
         self.packet_capture_signal.emit(packet_summary, packet)
 
-        wrpcap(self.pcap_file, packet, append='True')
+        self.pkt_counter += 1
+        if self.pkt_counter > self.pcap_max:
+            self.create_new_pcap()
+        wrpcap(self.pcap_file, packet, append=True)
 
         if DHCP in packet:
             self.new_device_check(packet)
@@ -172,6 +171,15 @@ class PacketCapture(QThread):
 
         self.port_scan_alert()
         self.dhcp_starvation_alert()
+
+    def create_new_pcap(self):
+        for file_num in itertools.count(1):
+            path = f'./Pocket-NetMon/NetMon {file_num}.pcap'
+            if not os.path.isfile(path):
+                open(path, "x").close()
+                self.pcap_file = path
+                self.pkt_counter = 0
+                break
 
     def should_stop_capturing(self, packet):
         return not self.is_capturing_active
